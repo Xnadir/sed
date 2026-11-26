@@ -58,6 +58,14 @@ fn match_address(
         }
 
         Address::Line(lineno) => Ok(context.line_number == *lineno),
+        Address::Step(first, step) => {
+            let linenum = context.line_number;
+            Ok(if *step == 0 {
+                linenum == *first
+            } else {
+                linenum >= *first && (linenum - *first).is_multiple_of(*step)
+            })
+        }
 
         // Recognize "$" as the last line of last file. This is consistent
         // with the original 7th Research Edition implementation:
@@ -84,17 +92,6 @@ fn applies(
     let result = if command.addr1.is_none() && command.addr2.is_none() {
         // No address
         Ok(true)
-    } else if let (Some(Address::Line(first)), Some(Address::StepMatch(step))) =
-        (&command.addr1, &command.addr2)
-    {
-        // `first~step` selects line `first` and every `step`th line after it.
-        // It depends only on the line number, so unlike a range it must not
-        // start late when line `first` never reached this command.
-        Ok(if *step == 0 {
-            linenum == *first
-        } else {
-            linenum >= *first && (linenum - *first).is_multiple_of(*step)
-        })
     } else if let Some(addr2) = &command.addr2 {
         // Two addresses
         if let Some(start) = command.start_line {
@@ -117,7 +114,6 @@ fn applies(
                         Ok(true)
                     }
                 }
-                Address::StepMatch(step) => Ok((linenum - start).is_multiple_of(*step)),
                 Address::StepEnd(step) => {
                     let target = (start / step + 1) * step;
                     if linenum >= target {
@@ -153,14 +149,15 @@ fn applies(
                     Address::Line(n) if linenum >= *n => {
                         context.last_address = true;
                     }
-                    // A `$` end on the last line closes the range where it
-                    // starts, so revisiting the line can't select it again.
-                    Address::Last
+                    // A `$` end on the last line, or a first~step end that
+                    // matches the start line, closes the range where it starts,
+                    // so revisiting the line can't select it again.
+                    Address::Last | Address::Step(..)
                         if match_address(addr2, reader, pattern, context, &command.location)? =>
                     {
                         context.last_address = true;
                     }
-                    Address::RelLine(0) | Address::StepMatch(0) | Address::StepEnd(0) => {
+                    Address::RelLine(0) | Address::StepEnd(0) => {
                         context.last_address = true;
                     }
                     _ => {
@@ -751,12 +748,7 @@ fn process_file(
                     // At range end replace pattern space with text and
                     // start the next cycle.
                     pattern.clear();
-                    // `first~step` selects single lines, so each one gets the text.
-                    if command.addr2.is_none()
-                        || matches!(command.addr2, Some(Address::StepMatch(_)))
-                        || context.last_address
-                        || reader.last_line()?
-                    {
+                    if command.addr2.is_none() || context.last_address || reader.last_line()? {
                         let text = extract_variant!(command, Text);
                         output.write_bytes(text.as_ref())?;
                     }

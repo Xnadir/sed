@@ -4471,3 +4471,22 @@ fn test_step_address_change_prints_text_for_each_line() {
         .succeeds()
         .stdout_is("X\nb\nX\nd\nX\n");
 }
+
+#[test]
+fn test_step_address_in_a_range() {
+    // first~step is a single address, so it can start or end a range.
+    for (script, expected) in [
+        ("1~3,+1p", "a\nb\nd\ne\ng\n"),
+        ("0~2,4p", "b\nc\nd\nf\n"),
+        ("4,1~2p", "d\ne\n"),
+        // An end that matches the start line closes the range there.
+        ("3,1~2p", "c\n"),
+        ("/b/,1~3p", "b\nc\nd\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("a\nb\nc\nd\ne\nf\ng\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
